@@ -1,0 +1,32 @@
+---
+- name: Backup SSL files with hostname and chain.crt
+  hosts: all
+  gather_facts: no
+  become: true
+
+  vars:
+    source_dirs:
+      - /etc/ssl/app1
+      - /etc/ssl/app2
+    hostname: "{{ inventory_hostname }}"
+    date_stamp: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+
+  tasks:
+
+    - name: Create dated backup folder in each source directory
+      file:
+        path: "{{ item }}/backup_{{ date_stamp }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ source_dirs }}"
+
+    - name: Copy specific files if they exist
+      shell: |
+        for f in {{ hostname }}.crt {{ hostname }}.key chain.crt; do
+          if [ -f "{{ item }}/$f" ]; then
+            cp "{{ item }}/$f" "{{ item }}/backup_{{ date_stamp }}/"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      loop: "{{ source_dirs }}"
