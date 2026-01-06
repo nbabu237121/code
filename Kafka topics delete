@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# --- CONFIGURATION ---
+ZK_HOST="localhost:2181"
+LOG_DIR="/tmp/kafka-logs"          # Path from your server.properties 'log.dirs'
+KAFKA_BIN="/usr/local/kafka/bin"   # Path to your Kafka bin folder
+SEARCH_TERM="catalog"              # Keyword to match topics for deletion
+
+echo "Starting manual cleanup for topics containing: '$SEARCH_TERM'..."
+
+# 1. List and Filter Topics from ZooKeeper
+# We extract the list from ZK and use grep to find matches
+TOPICS_TO_DELETE=$($KAFKA_BIN/zookeeper-shell.sh $ZK_HOST <<< "ls /brokers/topics" | grep '\[.*\]' | sed 's/[][]//g' | tr ',' '\n' | grep "$SEARCH_TERM")
+
+if [ -z "$TOPICS_TO_DELETE" ]; then
+    echo "No topics found matching '$SEARCH_TERM'. Exiting."
+    exit 0
+fi
+
+echo "Topics identified for deletion:"
+echo "$TOPICS_TO_DELETE"
+echo "--------------------------------"
+
+for TOPIC in $TOPICS_TO_DELETE; do
+    echo "Processing $TOPIC..."
+
+    # 2. Delete from ZooKeeper (Metadata)
+    echo "  -> Removing ZooKeeper nodes..."
+    $KAFKA_BIN/zookeeper-shell.sh $ZK_HOST <<< "deleteall /brokers/topics/$TOPIC" > /dev/null
+    $KAFKA_BIN/zookeeper-shell.sh $ZK_HOST <<< "deleteall /config/topics/$TOPIC" > /dev/null
+    $KAFKA_BIN/zookeeper-shell.sh $ZK_HOST <<< "deleteall /admin/delete_topics/$TOPIC" > /dev/null
+
+    # 3. Delete from Disk (Log Segments)
+    # Partitions are stored as folders: topicname-0, topicname-1, etc.
+    echo "  -> Removing disk directories in $LOG_DIR..."
+    rm -rf ${LOG_DIR}/${TOPIC}-[0-9]*
+done
+
+# 4. Updating Checkpoint Files
+# These files track offsets for recovery and log cleaning. 
+# If they contain references to deleted partitions, Kafka might throw errors on startup.
+echo "  -> Cleaning offset checkpoint files..."
+CHECKPOINT_FILES=("replication-offset-checkpoint" "recovery-point-offset-checkpoint" "cleaner-offset-checkpoint")
+
+for FILE in "${CHECKPOINT_FILES[@]}"; do
+    if [ -f "$LOG_DIR/$FILE" ]; then
+        # Remove lines matching the deleted topics from the checkpoint files
+        for TOPIC in $TOPICS_TO_DELETE; do
+            sed -i "/^$TOPIC /d" "$LOG_DIR/$FILE"
+        done
+        
+        # Update the header count (the first line of the file indicates the number of entries)
+        ENTRY_COUNT=$(wc -l < "$LOG_DIR/$FILE")
+        ACTUAL_COUNT=$((ENTRY_COUNT - 1))
+        sed -i "1s/.*/$ACTUAL_COUNT/" "$LOG_DIR/$FILE"
+        echo "     Updated $FILE"
+    fi
+done
+
+echo "--------------------------------"
+echo "Cleanup complete. You can now restart your Kafka brokers."
