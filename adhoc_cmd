@@ -1,0 +1,5 @@
+adhoc commands
+
+# -P 4 runs up to 4 processes simultaneously
+# -I {} replaces the placeholder with the filename
+ls part_* | xargs -P 4 -I {} ./your_script.sh {}
