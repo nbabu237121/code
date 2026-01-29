@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+export GITHUB_APP_ID="12345"  # Or Client ID
+export GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)"
+
+# Generate JWT (reuse from token script)
+b64enc() { openssl enc -base64 -A | tr '+/' '-_' | tr -d '='; }
+NOW=$(date +%s)
+HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | jq -r .)
+PAYLOAD=$(printf '{"iat":%d,"iss":%s,"exp":%d}' "$NOW" "$GITHUB_APP_ID" "$((NOW + 600))" | jq -r .)
+SIGNED_CONTENT=$(printf '%s.%s' "$HEADER" "$PAYLOAD" | b64enc)
+SIG=$(printf '%s' "$SIGNED_CONTENT" | openssl dgst -binary -sha256 -sign <(printf '%s' "$GITHUB_APP_PRIVATE_KEY") | b64enc)
+JWT="${SIGNED_CONTENT}.${SIG}"
+
+# List installations
+INSTALLATIONS=$(curl -s -H "Authorization: Bearer $JWT" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/app/installations" | jq -r '.[].id')
+
+echo "Available Installation IDs:"
+echo "$INSTALLATIONS"
+
+=============
+Tools: jq, openssl, curl
+Export vars: export GITHUB_APP_ID=123 GITHUB_APP_INSTALLATION_ID=456 GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)
+==============
+#!/usr/bin/env bash
+set -euo pipefail
+
+b64enc() { openssl enc -base64 -A | tr '+/' '-_' | tr -d '='; }
+
+NOW=$(date +%s)
+HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | jq -r -c .)
+PAYLOAD=$(printf '{"iat":%d,"iss":%s,"exp":%d}' "$NOW" "$GITHUB_APP_ID" "$((NOW + 600))" | jq -r -c .)
+
+SIGNED_CONTENT=$(printf '%s.%s' "$HEADER" "$PAYLOAD" | b64enc)
+SIG=$(printf '%s' "$SIGNED_CONTENT" | openssl dgst -binary -sha256 -sign <(printf '%s' "$GITHUB_APP_PRIVATE_KEY") | b64enc)
+JWT="${SIGNED_CONTENT}.${SIG}"
+
+TOKEN=$(curl -s -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  "https://api.github.com/app/installations/${GITHUB_APP_INSTALLATION_ID}/access_tokens" | jq -r '.token')
+
+echo "$TOKEN"
