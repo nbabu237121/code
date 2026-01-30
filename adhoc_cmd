@@ -3,3 +3,45 @@ adhoc commands
 # -P 4 runs up to 4 processes simultaneously
 # -I {} replaces the placeholder with the filename
 ls part_* | xargs -P 4 -I {} ./your_script.sh {}
+====================================
+# Export private key
+keytool -importkeystore -srckeystore client.jks -destkeystore client.pkcs12 -srcstoretype JKS -deststoretype PKCS12 -deststorepass keystorepass
+openssl pkcs12 -in client.pkcs12 -nocerts -nodes -out client.key -passin pass:keystorepass
+
+# Export cert
+keytool -exportcert -alias client -keystore client.jks -file client.crt -storepass keystorepass
+
+# CA cert (if separate)
+keytool -exportcert -alias cacert -keystore truststore.jks -file ca.crt -storepass trustpass
+
+-----
+#!/bin/bash
+SR_URL="https://schema-registry:8081"
+USER="username"
+PASS="password"
+
+# Basic auth + client cert (PEM files)
+curl -u "$USER:$PASS" \
+  --cert client.crt \
+  --key client.key \
+  --cacert ca.crt \
+  -k  # Skip verify if self-signed
+  "$SR_URL/subjects"
+
+# List schemas
+curl -u "$USER:$PASS" \
+  --cert client.crt --key client.key --cacert ca.crt \
+  "$SR_URL/subjects/mysubject/versions/latest"
+
+# Register new schema
+curl -X POST -u "$USER:$PASS" \
+  --cert client.crt --key client.key --cacert ca.crt \
+  -H "Content-Type: application/vnd.schemaregistry.v1+json" \
+  --data '{"schema": "{\"type\":\"string\"}"}' \
+  "$SR_URL/subjects/mysubject-value/versions"
+
+------------
+curl --cert-type JKS --cert client.jks:keystorepass \
+  --cacert truststore.jks:trustpass \
+  -u "$USER:$PASS" \
+  "$SR_URL/config"
