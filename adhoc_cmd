@@ -45,3 +45,71 @@ curl --cert-type JKS --cert client.jks:keystorepass \
   --cacert truststore.jks:trustpass \
   -u "$USER:$PASS" \
   "$SR_URL/config"
+==============================
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_NAME=$(basename "$0")
+LOCKFILE="/tmp/${SCRIPT_NAME}.lock"
+TIMEOUT=300  # 5 minutes in seconds
+MAX_RETRIES=3
+RETRY_DELAY=30
+
+# 1. Check if already running (PID lock)
+if [[ -f "$LOCKFILE" ]]; then
+    PID=$(cat "$LOCKFILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Script already running (PID: $PID). Exiting."
+        exit 1
+    else
+        echo "Removing stale lockfile for PID $PID"
+        rm -f "$LOCKFILE"
+    fi
+fi
+
+# Create lockfile with PID
+echo $$ > "$LOCKFILE"
+
+# 2. Timeout trap (kill self after 5 min)
+timeout_trap() {
+    echo "Script exceeded 5 minutes. Killing self."
+    kill -TERM $$
+}
+trap timeout_trap ALRM
+alarm $TIMEOUT &
+
+# 3. Curl retry function
+curl_retry() {
+    local url="$1"
+    local retries=0
+    while [[ $retries -lt $MAX_RETRIES ]]; do
+        if curl -s -f "$url" >/dev/null 2>&1; then
+            echo "Curl succeeded on attempt $((retries + 1))"
+            return 0
+        fi
+        retries=$((retries + 1))
+        if [[ $retries -lt $MAX_RETRIES ]]; then
+            echo "Curl failed (attempt $retries/$MAX_RETRIES). Retrying in $RETRY_DELAY sec..."
+            sleep $RETRY_DELAY
+        fi
+    done
+    echo "Curl failed after $MAX_RETRIES attempts"
+    return 1
+}
+
+# Main logic (your curl command)
+echo "Starting script at $(date)"
+if curl_retry "https://api.github.com/user"; then
+    echo "SUCCESS: API check passed"
+    # Your actual commands here
+else
+    echo "FAILED: Curl retries exhausted"
+    exit 1
+fi
+
+# Cleanup
+trap - ALRM
+kill $! 2>/dev/null || true  # Kill alarm
+rm -f "$LOCKFILE"
+echo "Script completed at $(date)"
+
