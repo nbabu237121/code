@@ -1,115 +1,31 @@
-adhoc commands
+---
+- name: Truncate large files (>1GB) without deleting
+  hosts: all
+  become: yes
+  vars:
+    scan_paths:
+      - /var/log
+      - /tmp
+      - /home/app/logs
+    size_threshold: 1g
 
-# -P 4 runs up to 4 processes simultaneously
-# -I {} replaces the placeholder with the filename
-ls part_* | xargs -P 4 -I {} ./your_script.sh {}
-====================================
-# Export private key
-keytool -importkeystore -srckeystore client.jks -destkeystore client.pkcs12 -srcstoretype JKS -deststoretype PKCS12 -deststorepass keystorepass
-openssl pkcs12 -in client.pkcs12 -nocerts -nodes -out client.key -passin pass:keystorepass
+  tasks:
+    - name: Find large files
+      ansible.builtin.find:
+        paths: "{{ scan_paths }}"
+        size: >={{ size_threshold }}
+        recurse: yes
+        file_type: file
+      register: large_files
 
-# Export cert
-keytool -exportcert -alias client -keystore client.jks -file client.crt -storepass keystorepass
+    - name: Show files to truncate
+      ansible.builtin.debug:
+        msg: "Will truncate {{ large_files.files | length }} files > {{ size_threshold }}"
 
-# CA cert (if separate)
-keytool -exportcert -alias cacert -keystore truststore.jks -file ca.crt -storepass trustpass
-
------
-#!/bin/bash
-SR_URL="https://schema-registry:8081"
-USER="username"
-PASS="password"
-
-# Basic auth + client cert (PEM files)
-curl -u "$USER:$PASS" \
-  --cert client.crt \
-  --key client.key \
-  --cacert ca.crt \
-  -k  # Skip verify if self-signed
-  "$SR_URL/subjects"
-
-# List schemas
-curl -u "$USER:$PASS" \
-  --cert client.crt --key client.key --cacert ca.crt \
-  "$SR_URL/subjects/mysubject/versions/latest"
-
-# Register new schema
-curl -X POST -u "$USER:$PASS" \
-  --cert client.crt --key client.key --cacert ca.crt \
-  -H "Content-Type: application/vnd.schemaregistry.v1+json" \
-  --data '{"schema": "{\"type\":\"string\"}"}' \
-  "$SR_URL/subjects/mysubject-value/versions"
-
-------------
-curl --cert-type JKS --cert client.jks:keystorepass \
-  --cacert truststore.jks:trustpass \
-  -u "$USER:$PASS" \
-  "$SR_URL/config"
-==============================
-#!/bin/bash
-set -euo pipefail
-
-SCRIPT_NAME=$(basename "$0")
-LOCKFILE="/tmp/${SCRIPT_NAME}.lock"
-TIMEOUT=300  # 5 minutes in seconds
-MAX_RETRIES=3
-RETRY_DELAY=30
-
-# 1. Check if already running (PID lock)
-if [[ -f "$LOCKFILE" ]]; then
-    PID=$(cat "$LOCKFILE")
-    if kill -0 "$PID" 2>/dev/null; then
-        echo "Script already running (PID: $PID). Exiting."
-        exit 1
-    else
-        echo "Removing stale lockfile for PID $PID"
-        rm -f "$LOCKFILE"
-    fi
-fi
-
-# Create lockfile with PID
-echo $$ > "$LOCKFILE"
-
-# 2. Timeout trap (kill self after 5 min)
-timeout_trap() {
-    echo "Script exceeded 5 minutes. Killing self."
-    kill -TERM $$
-}
-trap timeout_trap ALRM
-alarm $TIMEOUT &
-
-# 3. Curl retry function
-curl_retry() {
-    local url="$1"
-    local retries=0
-    while [[ $retries -lt $MAX_RETRIES ]]; do
-        if curl -s -f "$url" >/dev/null 2>&1; then
-            echo "Curl succeeded on attempt $((retries + 1))"
-            return 0
-        fi
-        retries=$((retries + 1))
-        if [[ $retries -lt $MAX_RETRIES ]]; then
-            echo "Curl failed (attempt $retries/$MAX_RETRIES). Retrying in $RETRY_DELAY sec..."
-            sleep $RETRY_DELAY
-        fi
-    done
-    echo "Curl failed after $MAX_RETRIES attempts"
-    return 1
-}
-
-# Main logic (your curl command)
-echo "Starting script at $(date)"
-if curl_retry "https://api.github.com/user"; then
-    echo "SUCCESS: API check passed"
-    # Your actual commands here
-else
-    echo "FAILED: Curl retries exhausted"
-    exit 1
-fi
-
-# Cleanup
-trap - ALRM
-kill $! 2>/dev/null || true  # Kill alarm
-rm -f "$LOCKFILE"
-echo "Script completed at $(date)"
-
+    - name: Truncate large files to 0 bytes
+      ansible.builtin.shell: |
+        cat /dev/null > "{{ item.path }}"
+      loop: "{{ large_files.files }}"
+      args:
+        removes: "{{ item.path }}"  # Skip if file gone
+      register: truncate_results
