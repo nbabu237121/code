@@ -1,0 +1,19 @@
+Configuration Example
+text
+logging.appenders.console.type: console
+logging.appenders.console.layout.type: pattern
+logging.appenders.console.layout.highlight: true
+logging.appenders.json_file.type: file
+logging.appenders.json_file.fileName: /var/log/kibana-json.log
+logging.appenders.json_file.layout.type: json
+logging.root.appenders: ["console", "json_file"]
+logging.root.level: info
+Dual Console Output
+text
+logging.appenders.console_pattern.type: console
+logging.appenders.console_pattern.layout.type: pattern
+logging.appenders.console_pattern.layout.highlight: true
+logging.appenders.console_json.type: console
+logging.appenders.console_json.layout.type: json
+logging.root.appenders: ["console_pattern", "console_json"]
+logging.root.level: info
