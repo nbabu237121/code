@@ -17,3 +17,9 @@ logging.appenders.console_json.type: console
 logging.appenders.console_json.layout.type: json
 logging.root.appenders: ["console_pattern", "console_json"]
 logging.root.level: info
+==================
+
+logging.appenders.file_appender.type = file
+logging.appenders.file_appender.filename = /var/log/kibana/kibana.log
+logging.appenders.file_appender.layout.type = json
+logging.root.appenders = [file_appender]
